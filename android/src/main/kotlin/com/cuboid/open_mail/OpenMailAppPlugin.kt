@@ -1,5 +1,6 @@
 package com.cuboid.open_mail
 
+import android.util.Log
 import android.content.Context
 import android.content.Intent
 import android.content.pm.LabeledIntent
@@ -69,39 +70,64 @@ class OpenMailAppPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, Activi
     val emailIntent = Intent(Intent.ACTION_VIEW, Uri.parse("mailto:"))
     val packageManager = context.packageManager
 
-    val activitiesHandlingEmails = packageManager.queryIntentActivities(emailIntent, 0)
-    if (activitiesHandlingEmails.isNotEmpty()) {
-      // use the first email package to create the chooserIntent
-      val firstEmailPackageName = activitiesHandlingEmails.first().activityInfo.packageName
-      val firstEmailInboxIntent = packageManager.getLaunchIntentForPackage(firstEmailPackageName)
-      val emailAppChooserIntent = Intent.createChooser(firstEmailInboxIntent, chooserTitle)
+    val excludedPackages = listOf(
+        "com.paypal.android.p2pmobile",
+        "com.venmo",
+        "com.squareup.cash",
+        "com.moneybookers.skrillpayments",
+        "com.zellepay.zelle"
+    )
 
-      // created UI for other email packages and add them to the chooser
-      val emailInboxIntents = mutableListOf<LabeledIntent>()
-      for (i in 1 until activitiesHandlingEmails.size) {
-        val activityHandlingEmail = activitiesHandlingEmails[i]
-        val packageName = activityHandlingEmail.activityInfo.packageName
-        packageManager.getLaunchIntentForPackage(packageName)?.let { intent ->
-          emailInboxIntents.add(
-            LabeledIntent(
-              intent,
-              packageName,
-              activityHandlingEmail.loadLabel(packageManager),
-              activityHandlingEmail.icon
-            )
-          )
+    val activitiesHandlingEmails = packageManager.queryIntentActivities(emailIntent, 0)
+
+    Log.d("OpenMailDebug", "Found ${activitiesHandlingEmails.size} apps for mailto:")
+
+    // Filter out excluded packages
+    val filteredActivities = activitiesHandlingEmails.filter {
+        val pkgName = it.activityInfo.packageName
+        val isExcluded = excludedPackages.any { exclude -> exclude.equals(pkgName, ignoreCase = true) }
+        if (isExcluded) {
+            Log.d("OpenMailDebug", "Excluded: $pkgName")
+        } else {
+            Log.d("OpenMailDebug", "Accepted: $pkgName")
         }
-      }
-      val extraEmailInboxIntents = emailInboxIntents.toTypedArray()
-      val finalIntent =
-        emailAppChooserIntent.putExtra(Intent.EXTRA_INITIAL_INTENTS, extraEmailInboxIntents)
-      finalIntent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
-      context.startActivity(finalIntent)
-      return true
-    } else {
-      return false
+        !isExcluded
     }
-  }
+
+    if (filteredActivities.isNotEmpty()) {
+        // Use the first filtered email app
+        val firstEmailPackageName = filteredActivities.first().activityInfo.packageName
+        val firstEmailInboxIntent = packageManager.getLaunchIntentForPackage(firstEmailPackageName)
+        val emailAppChooserIntent = Intent.createChooser(firstEmailInboxIntent, chooserTitle)
+
+        // Build labeled intents for the rest
+        val emailInboxIntents = mutableListOf<LabeledIntent>()
+        for (i in 1 until filteredActivities.size) {
+            val activityHandlingEmail = filteredActivities[i]
+            val packageName = activityHandlingEmail.activityInfo.packageName
+            packageManager.getLaunchIntentForPackage(packageName)?.let { intent ->
+                emailInboxIntents.add(
+                    LabeledIntent(
+                        intent,
+                        packageName,
+                        activityHandlingEmail.loadLabel(packageManager),
+                        activityHandlingEmail.icon
+                    )
+                )
+            }
+        }
+
+        val extraEmailInboxIntents = emailInboxIntents.toTypedArray()
+        emailAppChooserIntent.putExtra(Intent.EXTRA_INITIAL_INTENTS, extraEmailInboxIntents)
+        emailAppChooserIntent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
+
+        context.startActivity(emailAppChooserIntent)
+        return true
+    } else {
+        Log.d("OpenMailDebug", "No valid email apps found after filtering.")
+        return false
+    }
+}
 
   private fun composeNewEmailAppIntent(
     @NonNull chooserTitle: String, @NonNull contentJson: String
@@ -215,7 +241,7 @@ class OpenMailAppPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, Activi
 
   private fun getInstalledMailApps(): List<App> {
     val emailIntent = Intent(Intent.ACTION_VIEW, Uri.parse("mailto:"))
-    val packageManager = applicationContext.packageManager
+    val packageManager = context.packageManager
     val activitiesHandlingEmails = packageManager.queryIntentActivities(emailIntent, 0)
 
     val excludedPackages = listOf(
@@ -226,17 +252,26 @@ class OpenMailAppPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, Activi
         "com.zellepay.zelle"
     )
 
+    Log.d("OpenMailDebug", "Found ${activitiesHandlingEmails.size} apps handling mailto:")
+
     return if (activitiesHandlingEmails.isNotEmpty()) {
         val mailApps = mutableListOf<App>()
         for (activityInfo in activitiesHandlingEmails) {
+            val label = activityInfo.loadLabel(packageManager).toString()
             val pkgName = activityInfo.activityInfo.packageName
-            if (excludedPackages.any { pkgName.contains(it, ignoreCase = true) }) {
+
+            Log.d("OpenMailDebug", "Detected app: $label ($pkgName)")
+
+            if (excludedPackages.any { it.equals(pkgName, ignoreCase = true) }) {
+                Log.d("OpenMailDebug", "Excluded: $pkgName")
                 continue
             }
-            mailApps.add(App(activityInfo.loadLabel(packageManager).toString()))
+
+            mailApps.add(App(label))
         }
         mailApps
     } else {
+        Log.d("OpenMailDebug", "No email apps found")
         emptyList()
     }
 }
