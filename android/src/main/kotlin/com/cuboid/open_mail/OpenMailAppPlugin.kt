@@ -215,20 +215,32 @@ class OpenMailAppPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, Activi
 
   private fun getInstalledMailApps(): List<App> {
     val emailIntent = Intent(Intent.ACTION_VIEW, Uri.parse("mailto:"))
-    val packageManager = context.packageManager
+    val packageManager = applicationContext.packageManager
     val activitiesHandlingEmails = packageManager.queryIntentActivities(emailIntent, 0)
 
+    val excludedPackages = listOf(
+        "com.paypal.android.p2pmobile",
+        "com.venmo",
+        "com.squareup.cash",
+        "com.moneybookers.skrillpayments",
+        "com.zellepay.zelle"
+    )
+
     return if (activitiesHandlingEmails.isNotEmpty()) {
-      val mailApps = mutableListOf<App>()
-      for (i in 0 until activitiesHandlingEmails.size) {
-        val activityHandlingEmail = activitiesHandlingEmails[i]
-        mailApps.add(App(activityHandlingEmail.loadLabel(packageManager).toString()))
-      }
-      mailApps
+        val mailApps = mutableListOf<App>()
+        for (activityInfo in activitiesHandlingEmails) {
+            val pkgName = activityInfo.activityInfo.packageName
+            if (excludedPackages.any { pkgName.contains(it, ignoreCase = true) }) {
+                continue
+            }
+            mailApps.add(App(activityInfo.loadLabel(packageManager).toString()))
+        }
+        mailApps
     } else {
-      emptyList()
+        emptyList()
     }
-  }
+}
+
 }
 
 data class App(
